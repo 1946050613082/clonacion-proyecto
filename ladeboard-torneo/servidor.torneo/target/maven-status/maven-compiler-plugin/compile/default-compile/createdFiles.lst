@@ -1,0 +1,7 @@
+com/torneo/model/BracketNode.class
+servidor/torneo/ServidorTorneo.class
+com/torneo/model/EstadoPartida.class
+com/torneo/model/Jugador.class
+com/torneo/service/TorneoService.class
+com/torneo/Main.class
+com/torneo/model/Partida.class
