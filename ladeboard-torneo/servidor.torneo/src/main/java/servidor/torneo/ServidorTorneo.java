@@ -1,11 +1,11 @@
 package servidor.torneo;
 
-import com.torneo.service.TorneoService;
+import com.google.gson.Gson;
 import com.torneo.model.Jugador;
-
+import com.torneo.repository.AuthDAO;
+import com.torneo.service.TorneoServicePersistente;
 import io.javalin.Javalin;
 import io.javalin.websocket.WsContext;
-import com.google.gson.Gson;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -15,19 +15,18 @@ public class ServidorTorneo {
     private static final Set<WsContext> pantallasConectadas = ConcurrentHashMap.newKeySet();
     private static final Gson gson = new Gson();
 
-    // Servicio con la lógica del Integrante 1
-    private static final TorneoService torneoService = new TorneoService();
+    private static final TorneoServicePersistente torneoService = new TorneoServicePersistente();
+    private static final AuthDAO authDAO = new AuthDAO();
 
     public static void main(String[] args) {
 
-        // 1. Iniciar servidor Javalin en el puerto 7000 apuntando a /public
         Javalin app = Javalin.create(config -> {
             config.staticFiles.add("/public");
         }).start(8080);
 
         System.out.println("🚀 Servidor del Torneo iniciado en http://localhost:8080");
 
-        // 2. WebSocket para pantallas secundarias
+        // 1. Canal WebSocket para tiempo real
         app.ws("/ws-torneo", ws -> {
             ws.onConnect(ctx -> {
                 pantallasConectadas.add(ctx);
@@ -42,18 +41,26 @@ public class ServidorTorneo {
             ws.onError(ctx -> pantallasConectadas.remove(ctx));
         });
 
-        // 3. Endpoint para REGISTRAR JUGADORES
+        // 2. Endpoint de Autenticación / Login de Administrador
+        app.post("/api/login", ctx -> {
+            String user = ctx.formParam("username");
+            String pass = ctx.formParam("password");
+
+            if (user != null && pass != null && authDAO.autenticar(user, pass)) {
+                ctx.status(200).result("{\"status\":\"OK\",\"message\":\"Login exitoso\"}");
+            } else {
+                ctx.status(401).result("{\"status\":\"ERROR\",\"message\":\"Credenciales incorrectas\"}");
+            }
+        });
+
+        // 3. Endpoint Registro de Jugadores
         app.post("/api/jugadores", ctx -> {
             String nombre = ctx.formParam("nombre");
             String tag = ctx.formParam("tag");
 
             if (nombre != null && tag != null) {
-                // Instanciamos el jugador con el modelo del Integrante 1
-                Jugador nuevoJugador = new Jugador(nombre, tag);
-                
-                // NOTA: Si el método en TorneoService tiene otro nombre,
-                // simplemente reemplaza .registrarJugador por el nombre exacto que usó tu compañero.
-                // torneoService.registrarJugador(nuevoJugador);
+                Jugador nuevoJugador = new Jugador(tag, nombre);
+                torneoService.agregarJugador(nuevoJugador);
 
                 notificarPantallas();
                 ctx.result("Jugador " + tag + " registrado con éxito.");
@@ -62,31 +69,32 @@ public class ServidorTorneo {
             }
         });
 
-        // 4. Endpoint para REGISTRAR EL RESULTADO de una partida
+        // 4. Endpoint Resultado Partida
         app.post("/api/resultado", ctx -> {
             String idPartida = ctx.formParam("idPartida");
             String idGanador = ctx.formParam("idGanador");
 
             if (idPartida != null && idGanador != null) {
-                // Lógica para registrar resultado
-                notificarPantallas();
-                ctx.result("Resultado guardado correctamente.");
+                boolean exito = torneoService.registrarGanador(idPartida, idGanador);
+                if (exito) {
+                    notificarPantallas();
+                    ctx.result("Resultado guardado correctamente.");
+                } else {
+                    ctx.status(400).result("No se pudo registrar el resultado.");
+                }
             } else {
                 ctx.status(400).result("Faltan datos de la partida o ganador.");
             }
         });
 
-        // 5. Endpoint GET para consultar el estado del torneo
+        // 5. Endpoint Consulta Estado Torneo
         app.get("/api/estado", ctx -> {
-            ctx.json(torneoService);
+            ctx.json(torneoService.obtenerEstadoTorneoDTO());
         });
     }
 
-    // Método Broadcast para actualizar las pantallas en tiempo real
     private static void notificarPantallas() {
-        // Serializa la instancia de TorneoService o sus datos a JSON
-        String estadoJson = gson.toJson(torneoService);
-
+        String estadoJson = gson.toJson(torneoService.obtenerEstadoTorneoDTO());
         for (WsContext pantalla : pantallasConectadas) {
             if (pantalla.session.isOpen()) {
                 pantalla.send(estadoJson);
